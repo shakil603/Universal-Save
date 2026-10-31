@@ -22,7 +22,6 @@ UPLOAD_FOLDER = os.path.join('static', 'uploads')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
 
-# ফোল্ডার তৈরি - না থাকলে বানাবে
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs('uploads', exist_ok=True)
 
@@ -138,49 +137,71 @@ def place_order():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# --- LIBRETUBE / PIPED API INTEGRATION FOR YOUTUBE ---
-def fetch_via_libretube(url_or_keyword):
+# --- NEWPIPE / LIBRETUBE BACKEND INTEGRATION FOR YOUTUBE ---
+def fetch_via_newpipe(url_or_keyword):
     """
-    LibreTube ও Piped প্রজেক্টের ওপেন সোর্স ব্যাকএন্ড এপিআই ব্যবহার করে ইউটিউব ডেটা ফেচ করার ফাংশন।
+    NewPipe এক্সট্রাক্টর ভিত্তিক ওপেন সোর্স Piped API ব্যবহার করে ইউটিউব ভিডিও ফেচ করার ফাংশন।
     """
     try:
-        # যদি এটি সার্চ কিউওয়ার্ড হয়
+        # যদি এটি কিউওয়ার্ড বা সার্চ টেক্সট হয়
         if not url_or_keyword.startswith(('http://', 'https://')):
             piped_search_url = f"https://pipedapi.kavin.rocks/search?q={requests.utils.quote(url_or_keyword)}&filter=videos"
             res = requests.get(piped_search_url, timeout=10)
             if res.status_code == 200:
-                items = res.json().get('items', [])
-                if items:
-                    vid = items[0].get('url', '').split('=')[-1]
-                    url_or_keyword = f"https://www.youtube.com/watch?v={vid}"
+                res_json = res.json()
+                if res_json and isinstance(res_json, dict):
+                    items = res_json.get('items', [])
+                    if items and isinstance(items, list):
+                        vid_url = items[0].get('url', '')
+                        if '=' in vid_url:
+                            vid = vid_url.split('=')[-1]
+                            url_or_keyword = f"https://www.youtube.com/watch?v={vid}"
+                        else:
+                            return None
+                    else:
+                        return None
                 else:
                     return None
+            else:
+                return None
 
-        # ভিডিও আইডি বা লিংক এক্সট্রাক্ট করা
+        # ভিডিও আইডি বের করা
         vid_id = ""
         if "youtu.be/" in url_or_keyword:
-            vid_id = url_or_keyword.split("youtu.be/")[1].split("?")[0]
+            parts = url_or_keyword.split("youtu.be/")
+            if len(parts) > 1:
+                vid_id = parts[1].split("?")[0].split("&")[0]
         elif "watch?v=" in url_or_keyword:
-            vid_id = url_or_keyword.split("watch?v=")[1].split("&")[0]
+            parts = url_or_keyword.split("watch?v=")
+            if len(parts) > 1:
+                vid_id = parts[1].split("&")[0].split("/")[0]
 
         if not vid_id:
             return None
 
-        # LibreTube/Piped ওপেন সোর্স ইনস্ট্যান্স থেকে স্ট্রিম ইনফো নেওয়া
+        # NewPipe/Piped API থেকে স্ট্রিম ডেটা আনা
         piped_info_url = f"https://pipedapi.kavin.rocks/streams/{vid_id}"
         r = requests.get(piped_info_url, timeout=15)
         if r.status_code == 200:
             data = r.json()
-            # ভিডিও স্ট্রিম লিংক খুঁজে বের করা
+            if not data or not isinstance(data, dict):
+                return None
+
             video_streams = data.get('videoStreams', [])
             best_stream_url = None
-            for s in video_streams:
-                if s.get('videoOnly') == False and s.get('url'):
-                    best_stream_url = s.get('url')
-                    break
-            
-            if not best_stream_url and video_streams:
-                best_stream_url = video_streams[0].get('url')
+            if video_streams and isinstance(video_streams, list):
+                for s in video_streams:
+                    if isinstance(s, dict) and s.get('videoOnly') == False and s.get('url'):
+                        best_stream_url = s.get('url')
+                        break
+                
+                if not best_stream_url and video_streams:
+                    first_s = video_streams[0]
+                    if isinstance(first_s, dict):
+                        best_stream_url = first_s.get('url')
+
+            if not best_stream_url:
+                return None
 
             title = data.get('title', 'YouTube Video')
             safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()[:80]
@@ -192,17 +213,17 @@ def fetch_via_libretube(url_or_keyword):
                 'duration': data.get('duration', 0),
                 'uploader': data.get('uploader', 'Unknown'),
                 'ext': 'mp4',
-                'platform': 'youtube_libretube',
-                'video_url': best_stream_url,
-                'url': best_stream_url,
+                'platform': 'youtube_newpipe',
+                'video_url': f"/api/proxy_video?stream_url={requests.utils.quote(best_stream_url)}",
+                'url': f"/api/proxy_video?stream_url={requests.utils.quote(best_stream_url)}",
                 'original_url': url_or_keyword,
                 'filename': f"{safe_title}.mp4"
             }
     except Exception as e:
-        logger.error(f"LibreTube API Error: {e}")
+        logger.error(f"NewPipe API Error: {e}")
     return None
 
-# --- UNIVERSAL Video Downloader (YouTube via LibreTube/Piped + Others via yt-dlp) ---
+# --- UNIVERSAL Video Downloader ---
 @app.route('/api/fetch', methods=['POST'])
 def fetch_video_data():
     data = request.get_json() or {}
@@ -210,13 +231,14 @@ def fetch_video_data():
     if not url_or_keyword:
         return jsonify({'error': 'লিংক বা কিউওয়ার্ড দিন'}), 400
 
-    # যদি এটি ইউটিউব লিংক বা ইউটিউব সার্চ হয়, তবে প্রাইওরিটি হিসেবে LibreTube ওপেন সোর্স মেথড ব্যবহার করবে
+    # ইউটিউব বা ইউটিউব সার্চের ক্ষেত্রে NewPipe ওপেন সোর্স ব্যাকএন্ড ব্যবহার করবে
     if 'youtube.com' in url_or_keyword or 'youtu.be' in url_or_keyword or not url_or_keyword.startswith(('http://', 'https://')):
-        lt_result = fetch_via_libretube(url_or_keyword)
-        if lt_result:
-            return jsonify(lt_result)
+        np_result = fetch_via_newpipe(url_or_keyword)
+        if np_result:
+            return jsonify(np_result)
+        # যদি নিউপাই থেকে ফেইল করে তবে yt-dlp ফলব্যাক হিসেবে ট্রাই করবে
 
-    # অন্যান্য প্ল্যাটফর্মের (যেমন TikTok, Facebook ইত্যাদি) জন্য আগের মতো yt-dlp অপশন কাজ করবে
+    # অন্যান্য প্ল্যাটফর্মের জন্য yt-dlp
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'nocheckcertificate': True,
@@ -236,6 +258,9 @@ def fetch_video_data():
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url_or_keyword, download=False)
+            if not info:
+                return jsonify({'error': 'ভিডিও ইনফো পাওয়া যায়নি'}), 404
+
             if 'entries' in info:
                 entries = [e for e in info['entries'] if e]
                 if not entries:
@@ -266,6 +291,7 @@ def fetch_video_data():
                 'filename': f"{safe_title}.mp4"
             })
     except Exception as e:
+        logger.error(f"Fetch error: {e}")
         return jsonify({'error': f"ব্যর্থ হয়েছে: {str(e)[:200]}"}), 500
 
 @app.route('/api/proxy_video')
