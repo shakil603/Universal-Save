@@ -91,8 +91,84 @@ app.post('/api/order', (req,res)=>{
   res.json({success:true});
 });
 
-app.post('/api/fetch', (req,res)=>{
-  res.json({success:false, error:'fetch logic here'});
+// --- NEWPIPE / PIPED API INTEGRATION FOR YOUTUBE ---
+app.post('/api/fetch', async (req, res) => {
+  try {
+    let urlOrKeyword = (req.body.url || '').trim();
+    if (!urlOrKeyword) {
+      return res.status(400).json({ success: false, error: 'লিংক বা কিউওয়ার্ড দিন' });
+    }
+
+    let vidId = '';
+
+    // যদি এটি কিউওয়ার্ড বা সার্চ টেক্সট হয়
+    if (!urlOrKeyword.startsWith('http://') && !urlOrKeyword.startsWith('https://')) {
+      const searchRes = await fetch(`https://pipedapi.kavin.rocks/search?q=${encodeURIComponent(urlOrKeyword)}&filter=videos`);
+      const searchJson = await searchRes.json();
+      if (searchJson && searchJson.items && searchJson.items.length > 0) {
+        const itemUrl = searchJson.items[0].url || '';
+        if (itemUrl.includes('=')) {
+          vidId = itemUrl.split('=pop').join('').split('=').pop();
+        }
+      }
+    } else {
+      // ভিডিও আইডি বা লিংক এক্সট্রাক্ট করা
+      if (urlOrKeyword.includes('youtu.be/')) {
+        vidId = urlOrKeyword.split('youtu.be/')[1].split('?')[0].split('&')[0];
+      } else if (urlOrKeyword.includes('watch?v=')) {
+        vidId = urlOrKeyword.split('watch?v=')[1].split('&')[0].split('/')[0];
+      }
+    }
+
+    if (!vidId) {
+      return res.status(404).json({ success: false, error: 'ভিডিও আইডি পাওয়া যায়নি' });
+    }
+
+    // NewPipe/Piped API থেকে স্ট্রিম ডেটা আনা
+    const streamRes = await fetch(`https://pipedapi.kavin.rocks/streams/${vidId}`);
+    const streamData = await streamRes.json();
+
+    if (!streamData || !streamData.videoStreams) {
+      return res.status(404).json({ success: false, error: 'NewPipe এপিআই থেকে ডেটা পাওয়া যায়নি' });
+    }
+
+    let bestStreamUrl = '';
+    const videoStreams = streamData.videoStreams;
+    for (let s of videoStreams) {
+      if (s.videoOnly === false && s.url) {
+        bestStreamUrl = s.url;
+        break;
+      }
+    }
+    if (!bestStreamUrl && videoStreams.length > 0) {
+      bestStreamUrl = videoStreams[0].url;
+    }
+
+    if (!bestStreamUrl) {
+      return res.status(404).json({ success: false, error: 'ভিডিও স্ট্রিম লিংক পাওয়া যায়নি' });
+    }
+
+    const title = streamData.title || 'YouTube Video';
+    const safeTitle = title.replace(/[^a-zA-Z0-9 _-]/g, '').trim().substring(0, 80);
+
+    res.json({
+      success: true,
+      title: title,
+      thumbnail: streamData.thumbnailUrl || '',
+      duration: streamData.duration || 0,
+      uploader: streamData.uploader || 'Unknown',
+      ext: 'mp4',
+      platform: 'youtube_newpipe',
+      video_url: bestStreamUrl,
+      url: bestStreamUrl,
+      original_url: urlOrKeyword,
+      filename: `${safeTitle}.mp4`
+    });
+
+  } catch (error) {
+    console.error('Fetch error:', error);
+    res.status(500).json({ success: false, error: 'ব্যর্থ হয়েছে: ' + error.message });
+  }
 });
 
 app.get('/', (req,res)=> res.sendFile(path.join(__dirname, 'index_1.html')));
