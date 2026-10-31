@@ -137,33 +137,37 @@ def place_order():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
-# --- NEWPIPE / LIBRETUBE BACKEND INTEGRATION FOR YOUTUBE ---
+# --- NEWPIPE / PIPED API INTEGRATION FOR YOUTUBE (WITH MULTIPLE FALLBACKS) ---
 def fetch_via_newpipe(url_or_keyword):
     """
-    NewPipe এক্সট্রাক্টর ভিত্তিক ওপেন সোর্স Piped API ব্যবহার করে ইউটিউব ভিডিও ফেচ করার ফাংশন।
+    একাধিক ওপেন সোর্স Piped (NewPipe Extractor) ইনস্ট্যান্স ব্যবহার করে ইউটিউব ভিডিও ফেচ করার ফাংশন।
     """
+    piped_instances = [
+        "https://pipedapi.kavin.rocks",
+        "https://pipedapi.drgns.space",
+        "https://piped-api.privacy.com.de",
+        "https://api.piped.privacy.coffee"
+    ]
+
     try:
         # যদি এটি কিউওয়ার্ড বা সার্চ টেক্সট হয়
         if not url_or_keyword.startswith(('http://', 'https://')):
-            piped_search_url = f"https://pipedapi.kavin.rocks/search?q={requests.utils.quote(url_or_keyword)}&filter=videos"
-            res = requests.get(piped_search_url, timeout=10)
-            if res.status_code == 200:
-                res_json = res.json()
-                if res_json and isinstance(res_json, dict):
-                    items = res_json.get('items', [])
-                    if items and isinstance(items, list):
-                        vid_url = items[0].get('url', '')
-                        if '=' in vid_url:
-                            vid = vid_url.split('=')[-1]
-                            url_or_keyword = f"https://www.youtube.com/watch?v={vid}"
-                        else:
-                            return None
-                    else:
-                        return None
-                else:
-                    return None
-            else:
-                return None
+            for base_url in piped_instances:
+                try:
+                    search_url = f"{base_url}/search?q={requests.utils.quote(url_or_keyword)}&filter=videos"
+                    res = requests.get(search_url, timeout=8)
+                    if res.status_code == 200:
+                        res_json = res.json()
+                        if res_json and isinstance(res_json, dict):
+                            items = res_json.get('items', [])
+                            if items and isinstance(items, list):
+                                vid_url = items[0].get('url', '')
+                                if '=' in vid_url:
+                                    vid = vid_url.split('=')[-1]
+                                    url_or_keyword = f"https://www.youtube.com/watch?v={vid}"
+                                    break
+                except:
+                    continue
 
         # ভিডিও আইডি বের করা
         vid_id = ""
@@ -179,48 +183,50 @@ def fetch_via_newpipe(url_or_keyword):
         if not vid_id:
             return None
 
-        # NewPipe/Piped API থেকে স্ট্রিম ডেটা আনা
-        piped_info_url = f"https://pipedapi.kavin.rocks/streams/{vid_id}"
-        r = requests.get(piped_info_url, timeout=15)
-        if r.status_code == 200:
-            data = r.json()
-            if not data or not isinstance(data, dict):
-                return None
+        # একাধিক ইনস্ট্যান্স ট্রাই করা
+        for base_url in piped_instances:
+            try:
+                piped_info_url = f"{base_url}/streams/{vid_id}"
+                r = requests.get(piped_info_url, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    if not data or not isinstance(data, dict):
+                        continue
 
-            video_streams = data.get('videoStreams', [])
-            best_stream_url = None
-            if video_streams and isinstance(video_streams, list):
-                for s in video_streams:
-                    if isinstance(s, dict) and s.get('videoOnly') == False and s.get('url'):
-                        best_stream_url = s.get('url')
-                        break
-                
-                if not best_stream_url and video_streams:
-                    first_s = video_streams[0]
-                    if isinstance(first_s, dict):
-                        best_stream_url = first_s.get('url')
+                    video_streams = data.get('videoStreams', [])
+                    best_stream_url = None
+                    if video_streams and isinstance(video_streams, list):
+                        for s in video_streams:
+                            if isinstance(s, dict) and s.get('videoOnly') == False and s.get('url'):
+                                best_stream_url = s.get('url')
+                                break
+                        
+                        if not best_stream_url and video_streams:
+                            first_s = video_streams[0]
+                            if isinstance(first_s, dict):
+                                best_stream_url = first_s.get('url')
 
-            if not best_stream_url:
-                return None
+                    if best_stream_url:
+                        title = data.get('title', 'YouTube Video')
+                        safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()[:80]
 
-            title = data.get('title', 'YouTube Video')
-            safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()[:80]
-
-            return {
-                'success': True,
-                'title': title,
-                'thumbnail': data.get('thumbnailUrl', ''),
-                'duration': data.get('duration', 0),
-                'uploader': data.get('uploader', 'Unknown'),
-                'ext': 'mp4',
-                'platform': 'youtube_newpipe',
-                'video_url': f"/api/proxy_video?stream_url={requests.utils.quote(best_stream_url)}",
-                'url': f"/api/proxy_video?stream_url={requests.utils.quote(best_stream_url)}",
-                'original_url': url_or_keyword,
-                'filename': f"{safe_title}.mp4"
-            }
+                        return {
+                            'success': True,
+                            'title': title,
+                            'thumbnail': data.get('thumbnailUrl', ''),
+                            'duration': data.get('duration', 0),
+                            'uploader': data.get('uploader', 'Unknown'),
+                            'ext': 'mp4',
+                            'platform': 'youtube_newpipe',
+                            'video_url': f"/api/proxy_video?stream_url={requests.utils.quote(best_stream_url)}",
+                            'url': f"/api/proxy_video?stream_url={requests.utils.quote(best_stream_url)}",
+                            'original_url': url_or_keyword,
+                            'filename': f"{safe_title}.mp4"
+                        }
+            except:
+                continue
     except Exception as e:
-        logger.error(f"NewPipe API Error: {e}")
+        logger.error(f"NewPipe Multi-Instance API Error: {e}")
     return None
 
 # --- UNIVERSAL Video Downloader ---
@@ -236,7 +242,6 @@ def fetch_video_data():
         np_result = fetch_via_newpipe(url_or_keyword)
         if np_result:
             return jsonify(np_result)
-        # যদি নিউপাই থেকে ফেইল করে তবে yt-dlp ফলব্যাক হিসেবে ট্রাই করবে
 
     # অন্যান্য প্ল্যাটফর্মের জন্য yt-dlp
     ydl_opts = {
