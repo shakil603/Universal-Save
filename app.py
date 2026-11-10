@@ -330,7 +330,9 @@ def build_strategies(platform, url):
     strategies = []
 
     if platform == 'youtube':
-        strategies.append(('youtube-android', {'extractor_args': {'youtube': {'player_client': ['android', 'web']}}}))
+        for client in ('ios', 'mweb', 'tv_embedded', 'web'):
+            strategies.append((f'youtube-{client}',
+                               {'extractor_args': {'youtube': {'player_client': [client]}}}))
     if platform == 'facebook':
         strategies.append(('facebook-desktop', {'http_headers': {'User-Agent': DESKTOP_UA}}))
         strategies.append(('facebook-mobile', {'http_headers': {'User-Agent': MOBILE_UA}}))
@@ -352,8 +354,10 @@ def build_strategies(platform, url):
 
 # ------------------------------------------------------------------ errors
 HINTS = [
-    (('login', 'log in', 'sign in', 'cookies', 'authentication', 'not logged'),
-     'এই সাইটে লগইন প্রয়োজন। সার্ভারে YTDLP_COOKIES_B64 সেট করুন (আপনার ব্রাউজারের cookies.txt)।'),
+    (('cannot parse data',),
+     'সাইটটির তথ্য পড়া যায়নি। সার্ভারের ডাউনলোডার আপডেট প্রয়োজন, অথবা কিছুক্ষণ পরে আবার চেষ্টা করুন।'),
+    (('login', 'log in', 'sign in to view', 'authentication', 'not logged'),
+     'এই ভিডিওটি ডাউনলোড করতে লগইন প্রয়োজন, তাই সার্ভার থেকে নামানো যাচ্ছে না।'),
     (('private', 'members-only', 'members only'),
      'ভিডিওটি প্রাইভেট বা শুধু সদস্যদের জন্য।'),
     (('not available in your country', 'geo', 'region'),
@@ -363,7 +367,7 @@ HINTS = [
     (('video unavailable', 'removed', 'does not exist', 'not found', '404'),
      'ভিডিওটি পাওয়া যায়নি বা মুছে ফেলা হয়েছে।'),
     (('sign in to confirm', 'bot'),
-     'সাইটটি বট হিসেবে সনাক্ত করেছে। কিছুক্ষণ পরে আবার চেষ্টা করুন অথবা cookies দিন।'),
+     'সাইটটি সার্ভারকে অস্থায়ীভাবে ব্লক করেছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।'),
     (('tls', 'ssl', 'timed out', 'timeout', 'connection', 'unable to download webpage'),
      'সাইটের সাথে সংযোগে সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করুন।'),
 ]
@@ -404,7 +408,9 @@ def extract_info(target, platform, download=False, extra_opts=None):
             logger.warning(f"[{platform}] strategy '{name}' crashed: {e}")
             errors.append(f'{name}: {e}')
     combined = ' | '.join(errors)
-    raise EngineError(friendly_error(combined) + f' [{combined[:300]}]', status=404 if 'not found' in combined.lower() else 500)
+    logger.error(f"[{platform}] all strategies failed: {combined}")
+    status = 404 if any(k in combined.lower() for k in ('not found', 'unavailable', 'does not exist')) else 500
+    raise EngineError(friendly_error(combined), status=status)
 
 
 def first_entry(info):
