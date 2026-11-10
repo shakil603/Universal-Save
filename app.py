@@ -11,7 +11,7 @@ import requests
 from flask import Flask, request, jsonify, render_template, Response, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 import yt_dlp
 from yt_dlp.utils import DownloadError
 
@@ -216,6 +216,7 @@ def fetch_via_newpipe(url_or_keyword):
                         title = data.get('title', 'YouTube Video')
                         safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '-', '_')]).strip()[:80]
 
+                        filename = f"{safe_title or 'video'}.mp4"
                         return {
                             'success': True,
                             'title': title,
@@ -226,8 +227,9 @@ def fetch_via_newpipe(url_or_keyword):
                             'platform': 'youtube_newpipe',
                             'video_url': build_proxy_url(best_stream_url),
                             'url': build_proxy_url(best_stream_url),
+                            'download_url': build_proxy_url(best_stream_url, download_filename=filename),
                             'original_url': url_or_keyword,
-                            'filename': f"{safe_title}.mp4"
+                            'filename': filename
                         }
             except:
                 continue
@@ -524,6 +526,7 @@ def download_to_server(url, platform, jid):
         'ext': os.path.splitext(name)[1].lstrip('.') or 'mp4',
         'platform': info.get('extractor', platform),
         'url': f'/static/downloads/{name}',
+        'download_url': f'/api/download/{name}',
         'original_url': url,
         'filename': safe_filename(title),
     }
@@ -561,6 +564,7 @@ def newpipe_service_fetch(text, is_search):
     best = max(streams, key=lambda s: s.get('height') or 0)
     title = data.get('title') or 'YouTube Video'
     proxied = build_proxy_url(best['url'])
+    filename = safe_filename(title)
     return {
         'success': True,
         'title': title,
@@ -571,8 +575,9 @@ def newpipe_service_fetch(text, is_search):
         'platform': 'youtube_newpipe',
         'video_url': proxied,
         'url': proxied,
+        'download_url': build_proxy_url(best['url'], download_filename=filename),
         'original_url': data.get('webpage_url') or text,
-        'filename': safe_filename(title),
+        'filename': filename,
         'strategy': 'newpipe-service',
         'resolution': best.get('resolution', ''),
     }
@@ -594,10 +599,12 @@ def decode_headers(value):
         return {}
 
 
-def build_proxy_url(stream_url, headers=None):
+def build_proxy_url(stream_url, headers=None, download_filename=None):
     params = {'stream_url': stream_url}
     if headers:
         params['h'] = encode_headers(headers)
+    if download_filename:
+        params['filename'] = download_filename
     return '/api/proxy_video?' + urlencode(params)
 
 
@@ -606,7 +613,10 @@ def direct_result(info, platform, page_url):
     direct = pick_direct_format(info)
     if direct is None:
         return None
-    proxied = build_proxy_url(direct['url'], direct.get('http_headers') or {})
+    filename = safe_filename(title)
+    headers = direct.get('http_headers') or {}
+    proxied = build_proxy_url(direct['url'], headers)
+    download_url = build_proxy_url(direct['url'], headers, filename)
     return {
         'success': True,
         'title': title,
@@ -617,8 +627,9 @@ def direct_result(info, platform, page_url):
         'platform': info.get('extractor', platform),
         'video_url': proxied,
         'url': proxied,
+        'download_url': download_url,
         'original_url': page_url,
-        'filename': safe_filename(title),
+        'filename': filename,
     }
 
 
@@ -694,6 +705,13 @@ def job_status(jid):
     return jsonify(body)
 
 
+@app.route('/api/download/<path:filename>')
+def download_file(filename):
+    """Serve completed server-side downloads as attachments, not inline media."""
+    return send_from_directory(DOWNLOAD_DIR, filename, as_attachment=True,
+                              download_name=os.path.basename(filename))
+
+
 @app.route('/api/proxy_video')
 def proxy_video():
     stream_url = request.args.get('stream_url', '')
@@ -721,6 +739,14 @@ def proxy_video():
         if r.headers.get(h):
             response_headers[h] = r.headers.get(h)
     response_headers.setdefault('Content-Type', 'video/mp4')
+    download_filename = request.args.get('filename')
+    if download_filename:
+        download_filename = os.path.basename(download_filename).strip() or 'video.mp4'
+        ascii_filename = secure_filename(download_filename) or 'video.mp4'
+        response_headers['Content-Disposition'] = (
+            f'attachment; filename="{ascii_filename}"; '
+            f"filename*=UTF-8''{quote(download_filename, safe='')}"
+        )
 
     def generate():
         try:

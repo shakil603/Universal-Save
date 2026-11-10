@@ -586,7 +586,7 @@
                     <source id="videoSource" src="" type="video/mp4">
                     Your browser does not support the video player.
                 </video>
-                <a id="dlLink" href="#" class="download-link" target="_blank">Download File</a>
+                <a id="dlLink" href="#" class="download-link">Download File</a>
             </div>
         </section>
 
@@ -806,7 +806,9 @@
                     }
                     player.load();
                     const dlLink = document.getElementById('dlLink');
-                    dlLink.href = data.url;
+                    // Use a server-side attachment response: browsers often ignore the
+                    // download attribute for proxied media, especially on mobile.
+                    dlLink.href = data.download_url || data.url;
                     dlLink.download = data.filename || 'video.mp4';
                     dlLink.setAttribute('data-original', data.original_url || data.url);
                     

@@ -4,6 +4,7 @@ import sys
 import time
 import unittest
 from unittest import mock
+from urllib.parse import parse_qs, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -113,6 +114,7 @@ class Routes(unittest.TestCase):
         self.assertTrue(d['url'].startswith('/api/proxy_video?'))
         self.assertEqual(d['filename'], 'Reel.mp4')
         self.assertEqual(d['strategy'], 'facebook-desktop')
+        self.assertEqual(parse_qs(urlparse(d['download_url']).query)['filename'], ['Reel.mp4'])
 
     def test_split_streams_creates_job_and_completes(self):
         info = {'title': 'Split', 'requested_formats': [{'url': 'a'}, {'url': 'b'}]}
@@ -141,6 +143,33 @@ class Routes(unittest.TestCase):
         r = self.client.get('/api/proxy_video?stream_url=file:///etc/passwd')
         self.assertEqual(r.status_code, 400)
 
+    def test_proxy_download_sets_attachment_filename(self):
+        upstream = mock.Mock(status_code=200, headers={'Content-Type': 'video/mp4'})
+        upstream.iter_content.return_value = [b'video-data']
+        with mock.patch.object(engine.requests, 'get', return_value=upstream):
+            r = self.client.get('/api/proxy_video', query_string={
+                'stream_url': 'https://cdn.example/video', 'filename': 'Sample Video.mp4'
+            })
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data, b'video-data')
+        self.assertIn('attachment', r.headers['Content-Disposition'])
+        self.assertIn('Sample_Video.mp4', r.headers['Content-Disposition'])
+        upstream.close.assert_called_once()
+
+    def test_completed_download_is_attachment(self):
+        name = 'test-download-route.mp4'
+        path = os.path.join(engine.DOWNLOAD_DIR, name)
+        with open(path, 'wb') as video:
+            video.write(b'video-data')
+        try:
+            r = self.client.get(f'/api/download/{name}')
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.data, b'video-data')
+            self.assertIn('attachment', r.headers['Content-Disposition'])
+        finally:
+            r.close()
+            os.remove(path)
+
 
 class NewPipeServiceClient(unittest.TestCase):
     def setUp(self):
@@ -162,6 +191,7 @@ class NewPipeServiceClient(unittest.TestCase):
         self.assertEqual(res['resolution'], '720p')
         self.assertTrue(res['url'].startswith('/api/proxy_video?'))
         self.assertIn('https%3A%2F%2Fg%2Fb', res['url'])
+        self.assertEqual(parse_qs(urlparse(res['download_url']).query)['filename'], ['Hi.mp4'])
 
     def test_service_down_returns_none(self):
         import requests as rq
