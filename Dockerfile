@@ -1,5 +1,5 @@
 # ১. পাইথন Slim বেস ইমেজ ব্যবহার
-FROM docker.io/library/python:3.10-slim
+FROM docker.io/library/python:3.11-slim
 
 # ২. সিস্টেমের প্রয়োজনীয় টুলস ইনস্টল করা (ffmpeg, curl এবং git)
 RUN apt-get update && apt-get install -y \
