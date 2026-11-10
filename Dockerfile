@@ -7,13 +7,17 @@ RUN chmod +x gradlew && ./gradlew --no-daemon installDist
 # ২. পাইথন রানটাইম (yt-dlp 2026.x-এর জন্য Python 3.11+ লাগে)
 FROM docker.io/library/python:3.11-slim
 
-# ৩. সিস্টেম টুলস: ffmpeg (মার্জ), curl, git, Java runtime (NewPipe সার্ভিসের জন্য)
+# ৩. সিস্টেম টুলস: ffmpeg (মার্জ), curl, git
+#    Java: apt-এ openjdk-17 এই base image-এ নেই, তাই build stage-এর JDK কপি করা হচ্ছে
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     git \
-    openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
+
+COPY --from=newpipe-build /opt/java/openjdk /opt/java/openjdk
+ENV JAVA_HOME=/opt/java/openjdk
+ENV PATH=/opt/java/openjdk/bin:${PATH}
 
 # ৪. ওয়ার্কিং ডিরেক্টরি
 WORKDIR /app
