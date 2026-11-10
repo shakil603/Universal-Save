@@ -30,6 +30,10 @@ class Detection(unittest.TestCase):
         self.assertNotIn('cookie', engine.friendly_error('Sign in to view this content, login required').lower())
         self.assertIn('পড়া যায়নি', engine.friendly_error('Facebook: Cannot parse data; please report'))
 
+    def test_youtube_bot_check_beats_login_hint(self):
+        msg = "youtube-ios: Sign in to confirm you're not a bot | web: login required"
+        self.assertIn('ব্লক', engine.friendly_error(msg))
+
     def test_friendly_errors(self):
         self.assertIn('লগইন', engine.friendly_error('Log in for access'))
         self.assertIn('প্রাইভেট', engine.friendly_error('This video is private'))
