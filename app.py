@@ -536,6 +536,48 @@ def list_platforms():
     return sorted(PLATFORMS.keys())
 
 
+# --- NewPipe Java service client (newpipe-service/, 127.0.0.1 only) ---
+NEWPIPE_URL = os.environ.get('NEWPIPE_URL', 'http://127.0.0.1:8081').rstrip('/')
+
+
+def newpipe_service_fetch(text, is_search):
+    """Java NewPipe Extractor সার্ভিস থেকে muxed (ভিডিও+অডিও) স্ট্রিম নেয়। ব্যর্থ হলে None।"""
+    params = {'q': text} if is_search else {'url': text}
+    try:
+        r = requests.get(f"{NEWPIPE_URL}/info", params=params, timeout=(3, 90))
+        if r.status_code != 200:
+            logger.warning(f"NewPipe service HTTP {r.status_code}: {r.text[:200]}")
+            return None
+        data = r.json()
+    except (requests.RequestException, ValueError) as e:
+        logger.warning(f"NewPipe service unavailable: {e}")
+        return None
+
+    if not data.get('ok'):
+        return None
+    streams = [s for s in data.get('streams', []) if s.get('url')]
+    if not streams:
+        return None
+    best = max(streams, key=lambda s: s.get('height') or 0)
+    title = data.get('title') or 'YouTube Video'
+    proxied = build_proxy_url(best['url'])
+    return {
+        'success': True,
+        'title': title,
+        'thumbnail': data.get('thumbnail', ''),
+        'duration': data.get('duration', 0),
+        'uploader': data.get('uploader', 'Unknown'),
+        'ext': 'mp4',
+        'platform': 'youtube_newpipe',
+        'video_url': proxied,
+        'url': proxied,
+        'original_url': data.get('webpage_url') or text,
+        'filename': safe_filename(title),
+        'strategy': 'newpipe-service',
+        'resolution': best.get('resolution', ''),
+    }
+
+
 # --- UNIVERSAL Video Downloader ---
 DEFAULT_UA = DESKTOP_UA
 
@@ -582,8 +624,12 @@ def direct_result(info, platform, page_url):
 
 @app.route('/api/health')
 def health():
+    try:
+        newpipe_ok = requests.get(f"{NEWPIPE_URL}/health", timeout=2).status_code == 200
+    except requests.RequestException:
+        newpipe_ok = False
     return jsonify({'ok': True, 'platforms': list_platforms(),
-                    'cookies': bool(ensure_cookie_file())})
+                    'cookies': bool(ensure_cookie_file()), 'newpipe_service': newpipe_ok})
 
 
 @app.route('/api/platforms')
@@ -601,7 +647,9 @@ def fetch_video_data():
     try:
         # ইউটিউব/কিউওয়ার্ড: আগে NewPipe/Piped
         if 'youtube.com' in text or 'youtu.be' in text or not is_url(text):
-            np_result = fetch_via_newpipe(text)
+            np_result = newpipe_service_fetch(text, is_search=not is_url(text))
+            if np_result is None:
+                np_result = fetch_via_newpipe(text)
             if np_result:
                 return jsonify(np_result)
 

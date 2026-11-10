@@ -16,6 +16,13 @@ Docker: `docker build -t universal-save . && docker run -p 10000:10000 universal
 - ফাইল মার্জ/HLS/DASH এর জন্য ব্যাকগ্রাউন্ড জব (`/api/jobs/<id>`)
 - বাংলায় ব্যাখ্যামূলক এরর (লগইন, প্রাইভেট, geo, বট-ব্লক ইত্যাদি)
 
+## NewPipe Java সার্ভিস (`newpipe-service/`)
+- NewPipe Extractor v0.27.1 (GPL-3.0) `newpipe-service/vendor/`-এ আছে, অপরিবর্তিত।
+- ছোট Java HTTP সার্ভিস `127.0.0.1:8081`-এ চলে (`/info?url=` বা `/info?q=`), শুধু Flask অ্যাপ ব্যবহার করে।
+- YouTube লিংক/সার্চে প্রথমে এটি ব্যবহার হয়; ব্যর্থ হলে আগের Piped পথ, তারপর yt-dlp।
+- Docker build-এ Gradle দিয়ে বানানো হয়; `start.sh` দুটো প্রসেস একসাথে চালায়।
+- লোকালি চালাতে: `cd newpipe-service && ./gradlew installDist && ./build/install/newpipe-service/bin/newpipe-service`
+
 ## Cookies (ঐচ্ছিক)
 বেশিরভাগ ভিডিওর জন্য cookies লাগে না। শুধু কিছু প্রাইভেট/লগইন-নির্ভর কনটেন্ট বা YouTube-এর বট-চেকের
 ক্ষেত্রে সহায়ক। নিজের ব্রাউজার থেকে Netscape-format `cookies.txt` এক্সপোর্ট করে base64 করে env var-এ দিন:
