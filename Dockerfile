@@ -1,30 +1,38 @@
-# ১. পাইথন Slim বেস ইমেজ ব্যবহার
-FROM docker.io/library/python:3.10-slim
+# ১. NewPipe Java সার্ভিস build (Gradle wrapper + vendored NewPipe Extractor)
+FROM docker.io/library/eclipse-temurin:17-jdk AS newpipe-build
+WORKDIR /src
+COPY newpipe-service/ ./
+RUN chmod +x gradlew && ./gradlew --no-daemon installDist
 
-# ২. সিস্টেমের প্রয়োজনীয় টুলস ইনস্টল করা (ffmpeg, curl এবং git)
-RUN apt-get update && apt-get install -y \
+# ২. পাইথন রানটাইম (yt-dlp 2026.x-এর জন্য Python 3.11+ লাগে)
+FROM docker.io/library/python:3.11-slim
+
+# ৩. সিস্টেম টুলস: ffmpeg (মার্জ), curl, git, Java runtime (NewPipe সার্ভিসের জন্য)
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     git \
+    openjdk-17-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
-# ৩. ওয়ার্কিং ডিরেক্টরি সেট করা
+# ৪. ওয়ার্কিং ডিরেক্টরি
 WORKDIR /app
 
-# ৪. ডিপেন্ডেন্সি ফাইল কন্টেইনারে কপি করা
+# ৫. পাইথন ডিপেন্ডেন্সি
 COPY requirements.txt .
-
-# ৫. পাইথন প্যাকেজগুলো ইনস্টল করা (গিট থাকায় এখন সফলভাবে বিল্ড হবে)
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ৬. প্রয়োজনীয় ফোল্ডার ও ফাইল তৈরি করা
-RUN mkdir -p uploads && touch database.json && touch cookies.txt
+# ৬. NewPipe সার্ভিসের বিল্ট ফাইল
+COPY --from=newpipe-build /src/build/install/newpipe-service /opt/newpipe
 
-# ৭. পুরো প্রজেক্টের কোড কন্টেইনারে কপি করা
+# ৭. প্রয়োজনীয় ফোল্ডার
+RUN mkdir -p uploads static/downloads && touch database.json
+
+# ৮. পুরো প্রজেক্ট কপি
 COPY . .
+RUN chmod +x start.sh
 
-# ৮. পোর্ট এক্সপোজ করা
 EXPOSE 10000
 
-# ৯. অ্যাপ্লিকেশন চালু করার কমান্ড
-CMD ["python", "app.py"]
+# ৯. Java সার্ভিস (127.0.0.1:8081) + পাইথন অ্যাপ একসাথে
+CMD ["sh", "start.sh"]

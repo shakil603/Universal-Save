@@ -8,3 +8,8 @@ database.json
 cookies.txt
 __pycache__/
 *.pyc
+
+# NewPipe Java service build output
+newpipe-service/build/
+newpipe-service/.gradle/
+newpipe-service/.kotlin/

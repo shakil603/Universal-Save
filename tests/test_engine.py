@@ -138,5 +138,36 @@ class Routes(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
 
 
+class NewPipeServiceClient(unittest.TestCase):
+    def setUp(self):
+        webapp.app.config['TESTING'] = True
+        self.client = webapp.app.test_client()
+
+    def _resp(self, status, payload):
+        m = mock.Mock(status_code=status, text=str(payload))
+        m.json.return_value = payload
+        return m
+
+    def test_picks_highest_muxed_stream(self):
+        payload = {'ok': True, 'title': 'Hi', 'duration': 5, 'thumbnail': '', 'uploader': 'u',
+                   'webpage_url': 'https://youtu.be/x',
+                   'streams': [{'url': 'https://g/a', 'height': 360, 'resolution': '360p'},
+                               {'url': 'https://g/b', 'height': 720, 'resolution': '720p'}]}
+        with mock.patch.object(webapp.requests, 'get', return_value=self._resp(200, payload)):
+            res = webapp.newpipe_service_fetch('https://youtu.be/x', is_search=False)
+        self.assertEqual(res['resolution'], '720p')
+        self.assertTrue(res['url'].startswith('/api/proxy_video?'))
+        self.assertIn('https%3A%2F%2Fg%2Fb', res['url'])
+
+    def test_service_down_returns_none(self):
+        import requests as rq
+        with mock.patch.object(webapp.requests, 'get', side_effect=rq.ConnectionError('down')):
+            self.assertIsNone(webapp.newpipe_service_fetch('funny cats', is_search=True))
+
+    def test_error_payload_returns_none(self):
+        with mock.patch.object(webapp.requests, 'get', return_value=self._resp(404, {'ok': False})):
+            self.assertIsNone(webapp.newpipe_service_fetch('x', is_search=True))
+
+
 if __name__ == '__main__':
     unittest.main()
