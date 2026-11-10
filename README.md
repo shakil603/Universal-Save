@@ -16,9 +16,9 @@ Docker: `docker build -t universal-save . && docker run -p 10000:10000 universal
 - ফাইল মার্জ/HLS/DASH এর জন্য ব্যাকগ্রাউন্ড জব (`/api/jobs/<id>`)
 - বাংলায় ব্যাখ্যামূলক এরর (লগইন, প্রাইভেট, geo, বট-ব্লক ইত্যাদি)
 
-## Cookies (Facebook / Instagram / প্রাইভেট কনটেন্টের জন্য)
-Facebook অনেক রিল/ভিডিওতে লগইন ছাড়া ডাউনলোড করতে দেয় না। নিজের ব্রাউজার থেকে Netscape-format
-`cookies.txt` এক্সপোর্ট করে তা base64 করে env var হিসেবে সেট করুন:
+## Cookies (ঐচ্ছিক)
+বেশিরভাগ ভিডিওর জন্য cookies লাগে না। শুধু কিছু প্রাইভেট/লগইন-নির্ভর কনটেন্ট বা YouTube-এর বট-চেকের
+ক্ষেত্রে সহায়ক। নিজের ব্রাউজার থেকে Netscape-format `cookies.txt` এক্সপোর্ট করে base64 করে env var-এ দিন:
 
 ```bash
 base64 -w0 cookies.txt        # আউটপুটটি YTDLP_COOKIES_B64 হিসেবে Render/Docker-এ দিন

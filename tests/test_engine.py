@@ -26,6 +26,10 @@ class Detection(unittest.TestCase):
         self.assertEqual(engine.normalize_url('https://m.facebook.com/watch/?v=1'),
                          'https://www.facebook.com/watch/?v=1')
 
+    def test_friendly_errors_no_cookie_talk(self):
+        self.assertNotIn('cookie', engine.friendly_error('Sign in to view this content, login required').lower())
+        self.assertIn('পড়া যায়নি', engine.friendly_error('Facebook: Cannot parse data; please report'))
+
     def test_friendly_errors(self):
         self.assertIn('লগইন', engine.friendly_error('Log in for access'))
         self.assertIn('প্রাইভেট', engine.friendly_error('This video is private'))
@@ -64,6 +68,11 @@ class Strategies(unittest.TestCase):
         self.assertEqual(info['title'], 'ok')
         self.assertEqual(len(calls), 2)
 
+    def test_youtube_has_multiple_clients(self):
+        names = [n for n, _ in engine.build_strategies('youtube', 'https://youtu.be/x')]
+        self.assertIn('youtube-ios', names)
+        self.assertIn('youtube-mweb', names)
+
     def test_all_strategies_fail_gives_hint(self):
         class FailYDL(object):
             def __init__(self, opts): pass
@@ -76,6 +85,7 @@ class Strategies(unittest.TestCase):
             with self.assertRaises(engine.EngineError) as ctx:
                 engine.extract_info('https://www.facebook.com/reel/1', 'facebook')
         self.assertIn('লগইন', str(ctx.exception))
+        self.assertNotIn('Sign in', str(ctx.exception))  # raw yt-dlp text must not reach the user
 
 
 class Routes(unittest.TestCase):
