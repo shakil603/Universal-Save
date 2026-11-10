@@ -8,7 +8,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-import engine  # noqa: E402
+import app as engine  # noqa: E402  (engine code lives in app.py)
 import app as webapp  # noqa: E402
 from yt_dlp.utils import DownloadError  # noqa: E402
 
