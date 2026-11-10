@@ -1,0 +1,10 @@
+# Runtime-generated files
+static/downloads/
+static/uploads/
+uploads/
+marketplace_data.json
+data.json
+database.json
+cookies.txt
+__pycache__/
+*.pyc
