@@ -1,7 +1,6 @@
 import os
 import json
 import base64
-import uuid
 import logging
 import time
 import datetime
@@ -10,7 +9,7 @@ from flask import Flask, request, jsonify, render_template, Response, send_from_
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from urllib.parse import urlencode, urlparse
-import yt_dlp
+import engine
 
 app = Flask(__name__, template_folder='.', static_folder='static')
 app.secret_key = os.environ.get('SECRET_KEY', 'universal_save_super_secret_key')
@@ -232,12 +231,8 @@ def fetch_via_newpipe(url_or_keyword):
         logger.error(f"NewPipe Multi-Instance API Error: {e}")
     return None
 
-# --- UNIVERSAL Video Downloader ---
-DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-DOWNLOAD_DIR = os.path.join('static', 'downloads')
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-DOWNLOAD_TTL = 60 * 60  # সার্ভারে তৈরি ফাইল ১ ঘণ্টা পরে মুছে যাবে
-COOKIE_FILE = 'cookies.txt'
+# --- UNIVERSAL Video Downloader (engine: engine.py) ---
+DEFAULT_UA = engine.DESKTOP_UA
 
 
 def encode_headers(headers):
@@ -259,156 +254,91 @@ def build_proxy_url(stream_url, headers=None):
     return '/api/proxy_video?' + urlencode(params)
 
 
-def safe_filename(title):
-    name = "".join(c for c in (title or '') if c.isalnum() or c in (' ', '-', '_')).strip()[:80]
-    return (name or 'video') + '.mp4'
-
-
-def _is_http(fmt):
-    return (fmt.get('protocol') or 'https') in ('http', 'https') and bool(fmt.get('url'))
-
-
-def _has_audio_and_video(fmt):
-    return fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none'
-
-
-def pick_direct_format(info):
-    """একটি ফাইলে ভিডিও+অডিও থাকা সরাসরি (HTTP) লিংক খুঁজে বের করে।"""
-    if _is_http(info) and _has_audio_and_video(info):
-        return info
-    candidates = [f for f in (info.get('formats') or []) if _is_http(f) and _has_audio_and_video(f)]
-    if not candidates:
+def direct_result(info, platform, page_url):
+    title = info.get('title', 'Video')
+    direct = engine.pick_direct_format(info)
+    if direct is None:
         return None
-    candidates.sort(key=lambda f: (f.get('height') or 0, f.get('tbr') or 0))
-    return candidates[-1]
-
-
-def cleanup_downloads():
-    now = time.time()
-    try:
-        for name in os.listdir(DOWNLOAD_DIR):
-            path = os.path.join(DOWNLOAD_DIR, name)
-            if os.path.isfile(path) and now - os.path.getmtime(path) > DOWNLOAD_TTL:
-                os.remove(path)
-    except Exception as e:
-        logger.warning(f"Cleanup error: {e}")
-
-
-def base_ydl_opts():
-    opts = {
-        'nocheckcertificate': True,
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
-        'geo_bypass': True,
-        'socket_timeout': 30,
-        'retries': 3,
-    }
-    if os.path.exists(COOKIE_FILE) and os.path.getsize(COOKIE_FILE) > 0:
-        opts['cookiefile'] = COOKIE_FILE
-    return opts
-
-
-def server_side_download(page_url, title):
-    """HLS/DASH বা ভিডিও+অডিও আলাদা থাকলে yt-dlp (ffmpeg) দিয়ে সার্ভারে ডাউনলোড করে ফাইল দেয়।"""
-    cleanup_downloads()
-    job = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
-    opts = base_ydl_opts()
-    opts.update({
-        'format': 'bestvideo*+bestaudio/best',
-        'merge_output_format': 'mp4',
-        'outtmpl': os.path.join(DOWNLOAD_DIR, job + '.%(ext)s'),
-    })
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(page_url, download=True)
-    if not info:
-        return None
-    files = [f for f in os.listdir(DOWNLOAD_DIR) if f.startswith(job + '.')]
-    if not files:
-        return None
-    name = files[0]
+    proxied = build_proxy_url(direct['url'], direct.get('http_headers') or {})
     return {
         'success': True,
-        'title': info.get('title', title),
+        'title': title,
         'thumbnail': info.get('thumbnail', ''),
         'duration': info.get('duration', 0),
         'uploader': info.get('uploader', 'Unknown'),
-        'ext': os.path.splitext(name)[1].lstrip('.') or 'mp4',
-        'platform': info.get('extractor', 'unknown'),
-        'video_url': f"/static/downloads/{name}",
-        'url': f"/static/downloads/{name}",
+        'ext': direct.get('ext') or 'mp4',
+        'platform': info.get('extractor', platform),
+        'video_url': proxied,
+        'url': proxied,
         'original_url': page_url,
-        'filename': safe_filename(info.get('title', title)),
+        'filename': engine.safe_filename(title),
     }
+
+
+@app.route('/api/health')
+def health():
+    return jsonify({'ok': True, 'platforms': engine.list_platforms(),
+                    'cookies': bool(engine.ensure_cookie_file())})
+
+
+@app.route('/api/platforms')
+def platforms():
+    return jsonify({'platforms': engine.list_platforms()})
 
 
 @app.route('/api/fetch', methods=['POST'])
 def fetch_video_data():
     data = request.get_json(silent=True) or {}
-    url_or_keyword = (data.get('url') or '').strip()
-    if not url_or_keyword:
-        return jsonify({'error': 'লিংক বা কিউওয়ার্ড দিন'}), 400
-
-    # ইউটিউব বা ইউটিউব সার্চের ক্ষেত্রে NewPipe/Piped ব্যাকএন্ড আগে চেষ্টা করবে
-    if 'youtube.com' in url_or_keyword or 'youtu.be' in url_or_keyword or not url_or_keyword.startswith(('http://', 'https://')):
-        np_result = fetch_via_newpipe(url_or_keyword)
-        if np_result:
-            return jsonify(np_result)
-
-    is_search = not url_or_keyword.startswith(('http://', 'https://'))
-    target = f"ytsearch1:{url_or_keyword}" if is_search else url_or_keyword
-
-    opts = base_ydl_opts()
-    opts.update({
-        # একক ফাইলে ভিডিও+অডিও থাকা ফরম্যাট আগে নেওয়া হবে, যাতে সরাসরি লিংক পাওয়া যায়
-        'format': 'best[vcodec!=none][acodec!=none][ext=mp4]/best[vcodec!=none][acodec!=none]/best',
-        'noplaylist': not is_search,
-    })
+    text = (data.get('url') or '').strip()
+    if not text:
+        return jsonify({'success': False, 'error': 'লিংক বা কিউওয়ার্ড দিন'}), 400
 
     try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(target, download=False)
-            if not info:
-                return jsonify({'error': 'ভিডিও ইনফো পাওয়া যায়নি'}), 404
-            if 'entries' in info:
-                entries = [e for e in info['entries'] if e]
-                if not entries:
-                    return jsonify({'error': 'কোনো ভিডিও পাওয়া যায়নি'}), 404
-                video_data = entries[0]
-            else:
-                video_data = info
+        # ইউটিউব/কিউওয়ার্ড: আগে NewPipe/Piped
+        if 'youtube.com' in text or 'youtu.be' in text or not engine.is_url(text):
+            np_result = fetch_via_newpipe(text)
+            if np_result:
+                return jsonify(np_result)
 
-        title = video_data.get('title', 'Video')
-        page_url = video_data.get('webpage_url') or url_or_keyword
-        direct = pick_direct_format(video_data)
+        is_search = not engine.is_url(text)
+        platform = engine.detect_platform(text)
+        page_url = text if is_search else engine.normalize_url(text)
+        target = f'ytsearch1:{text}' if is_search else page_url
+        extra = {'noplaylist': False} if is_search else None
 
-        if direct is None:
-            # সরাসরি ফাইল লিংক না থাকলে (HLS/DASH/আলাদা অডিও-ভিডিও) সার্ভারে ডাউনলোড করে দেওয়া হবে
-            result = server_side_download(page_url, title)
-            if not result:
-                return jsonify({'error': 'ভিডিও ডাউনলোড করা যায়নি'}), 404
+        info, strategy = engine.extract_info(target, platform, download=False, extra_opts=extra)
+        info = engine.first_entry(info)
+        page = info.get('webpage_url') or page_url
+
+        result = direct_result(info, platform, page)
+        if result:
+            result['strategy'] = strategy
             return jsonify(result)
 
-        proxied = build_proxy_url(direct['url'], direct.get('http_headers') or {})
-        return jsonify({
-            'success': True,
-            'title': title,
-            'thumbnail': video_data.get('thumbnail', ''),
-            'duration': video_data.get('duration', 0),
-            'uploader': video_data.get('uploader', 'Unknown'),
-            'ext': direct.get('ext') or 'mp4',
-            'platform': video_data.get('extractor', 'unknown'),
-            'video_url': proxied,
-            'url': proxied,
-            'original_url': page_url,
-            'filename': safe_filename(title),
-        })
-    except yt_dlp.utils.DownloadError as e:
-        logger.error(f"yt-dlp error: {e}")
-        return jsonify({'error': f"ব্যর্থ হয়েছে: {str(e)[:200]}"}), 500
+        # সরাসরি ফাইল নেই -> সার্ভারে ডাউনলোড জব
+        jid = engine.jobs.submit(page, platform)
+        return jsonify({'success': True, 'pending': True, 'job_id': jid, 'status': 'queued',
+                        'platform': platform, 'title': info.get('title', 'Video')}), 202
+
+    except engine.EngineError as e:
+        return jsonify({'success': False, 'error': str(e)}), e.status
     except Exception as e:
-        logger.error(f"Fetch error: {e}")
-        return jsonify({'error': f"ব্যর্থ হয়েছে: {str(e)[:200]}"}), 500
+        logger.exception('fetch failed')
+        return jsonify({'success': False, 'error': engine.friendly_error(str(e))}), 500
+
+
+@app.route('/api/jobs/<jid>')
+def job_status(jid):
+    job = engine.jobs.get(jid)
+    if not job:
+        return jsonify({'success': False, 'error': 'জবটি পাওয়া যায়নি বা মেয়াদ শেষ'}), 404
+    body = {'success': job['status'] != 'error', 'status': job['status'], 'job_id': jid}
+    if job['status'] == 'done':
+        body.update(job['result'])
+        body['success'] = True
+    elif job['status'] == 'error':
+        body['error'] = job['error']
+    return jsonify(body)
 
 
 @app.route('/api/proxy_video')

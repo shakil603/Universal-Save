@@ -749,6 +749,20 @@
             }, 2600);
         });
 
+        // জব স্ট্যাটাস পোল করা (Render-এর টাইমআউট এড়াতে)
+        async function waitForJob(jobId, btn, platform) {
+            const started = Date.now();
+            while (Date.now() - started < 10 * 60 * 1000) {
+                await new Promise(r => setTimeout(r, 2000));
+                const r = await fetch(`/api/jobs/${jobId}`);
+                const j = await r.json();
+                const secs = Math.round((Date.now() - started) / 1000);
+                if (btn) btn.innerText = `⏳ ${platform} ফাইল তৈরি হচ্ছে... (${secs}s)`;
+                if (j.status === 'done' || j.status === 'error') return j;
+            }
+            return { success: false, error: 'সময় শেষ হয়ে গেছে, আবার চেষ্টা করুন' };
+        }
+
         // UNIVERSAL ডাউনলোডার - সব প্লাটফর্ম সাপোর্ট (YouTube, TikTok, FB, Insta, Twitter)
         async function process() {
             const btn = document.querySelector('.hero .apple-btn');
@@ -774,7 +788,12 @@
                     body: JSON.stringify({url: urlInput})
                 });
                 
-                const data = await res.json();
+                let data = await res.json();
+
+                // সার্ভারে ডাউনলোড প্রয়োজন হলে জব শেষ হওয়া পর্যন্ত অপেক্ষা করা
+                if (data.pending && data.job_id) {
+                    data = await waitForJob(data.job_id, btn, platform);
+                }
                 
                 if(data.success) {
                     document.getElementById('vTitle').innerText = data.title;
