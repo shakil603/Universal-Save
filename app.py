@@ -356,6 +356,8 @@ def build_strategies(platform, url):
 HINTS = [
     (('cannot parse data',),
      'সাইটটির তথ্য পড়া যায়নি। সার্ভারের ডাউনলোডার আপডেট প্রয়োজন, অথবা কিছুক্ষণ পরে আবার চেষ্টা করুন।'),
+    (('sign in to confirm', 'not a bot', 'bot'),
+     'সাইটটি সার্ভারকে অস্থায়ীভাবে ব্লক করেছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।'),
     (('login', 'log in', 'sign in to view', 'authentication', 'not logged'),
      'এই ভিডিওটি ডাউনলোড করতে লগইন প্রয়োজন, তাই সার্ভার থেকে নামানো যাচ্ছে না।'),
     (('private', 'members-only', 'members only'),
@@ -366,8 +368,6 @@ HINTS = [
      'এই লিংকটি সাপোর্ট করা হয় না।'),
     (('video unavailable', 'removed', 'does not exist', 'not found', '404'),
      'ভিডিওটি পাওয়া যায়নি বা মুছে ফেলা হয়েছে।'),
-    (('sign in to confirm', 'bot'),
-     'সাইটটি সার্ভারকে অস্থায়ীভাবে ব্লক করেছে। কিছুক্ষণ পরে আবার চেষ্টা করুন।'),
     (('tls', 'ssl', 'timed out', 'timeout', 'connection', 'unable to download webpage'),
      'সাইটের সাথে সংযোগে সমস্যা হয়েছে। একটু পরে আবার চেষ্টা করুন।'),
 ]
